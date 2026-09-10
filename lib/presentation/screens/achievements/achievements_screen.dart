@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../application/achievements/achievements_provider.dart';
 import '../../../data/achievements/achievement_catalog.dart';
-import '../../../domain/achievement/achievement.dart';
+import '../../widgets/achievement_progress_card.dart';
 
 class AchievementsScreen extends ConsumerWidget {
   const AchievementsScreen({super.key});
@@ -38,6 +38,8 @@ class AchievementsScreen extends ConsumerWidget {
     final unlockedIds = unlocked.map((u) => u.achievementId).toSet();
     final progress = ref.watch(achievementProgressProvider);
     final catalog = AchievementCatalog.all;
+    final progressRatio =
+        progress.total == 0 ? 0.0 : progress.unlocked / progress.total;
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0C),
@@ -56,128 +58,78 @@ class AchievementsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 40),
         children: [
+          // Header con progreso global
           Container(
-            padding: const EdgeInsets.all(18),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.05),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.amber.withOpacity(0.25)),
+              gradient: LinearGradient(
+                colors: [
+                  Colors.amber.withOpacity(0.15),
+                  Colors.amber.withOpacity(0.05),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.amber.withOpacity(0.3)),
             ),
-            child: Row(
+            child: Column(
               children: [
-                const Icon(Icons.workspace_premium_rounded,
-                    color: Colors.amber, size: 32),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${progress.unlocked} / ${progress.total} desbloqueados',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 16,
-                          color: Colors.white,
-                        ),
+                Row(
+                  children: [
+                    const Icon(Icons.workspace_premium_rounded,
+                        color: Colors.amber, size: 36),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${progress.unlocked} / ${progress.total}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 22,
+                              color: Colors.white,
+                            ),
+                          ),
+                          Text(
+                            'logros desbloqueados',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.white.withOpacity(0.5),
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Sigue registrando resultados para conseguir más.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white.withOpacity(0.45),
-                        ),
-                      ),
-                    ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: progressRatio,
+                    minHeight: 8,
+                    backgroundColor: Colors.white.withOpacity(0.1),
+                    valueColor: const AlwaysStoppedAnimation(Colors.amber),
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 24),
+
+          // Lista de logros con progreso
           for (final a in catalog) ...[
-            _AchievementCard(
-              achievement: a,
-              unlocked: unlockedIds.contains(a.id),
+            AchievementProgressCard(
+              title: a.nameEs,
+              description: a.descriptionEs,
               icon: _icon(a.icon),
+              unlocked: unlockedIds.contains(a.id),
+              // Progreso individual simple (0 o 1). 
+              // Puedes mejorar esto con lógica real por tipo de logro.
+              progress: unlockedIds.contains(a.id) ? 1.0 : 0.0,
             ),
             const SizedBox(height: 10),
           ],
-        ],
-      ),
-    );
-  }
-}
-
-class _AchievementCard extends StatelessWidget {
-  final Achievement achievement;
-  final bool unlocked;
-  final IconData icon;
-
-  const _AchievementCard({
-    required this.achievement,
-    required this.unlocked,
-    required this.icon,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: unlocked
-            ? Colors.amber.withOpacity(0.08)
-            : Colors.white.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: unlocked
-              ? Colors.amber.withOpacity(0.35)
-              : Colors.white.withOpacity(0.06),
-        ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: unlocked
-                  ? Colors.amber.withOpacity(0.2)
-                  : Colors.white.withOpacity(0.06),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              icon,
-              color: unlocked ? Colors.amber : Colors.white24,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  achievement.nameEs,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 15,
-                    color: unlocked ? Colors.white : Colors.white54,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  achievement.descriptionEs,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white.withOpacity(unlocked ? 0.5 : 0.28),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (unlocked)
-            const Icon(Icons.check_circle_rounded,
-                color: Colors.amber, size: 22),
         ],
       ),
     );

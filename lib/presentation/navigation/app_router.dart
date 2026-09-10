@@ -7,6 +7,7 @@ import '../../domain/user/user.dart';
 import '../screens/achievements/achievements_screen.dart';
 import '../screens/calendar/calendar_screen.dart';
 import '../screens/divisions/divisions_screen.dart';
+import '../screens/games/game_detail_screen.dart';
 import '../screens/games/games_screen.dart';
 import '../screens/home/home_screen.dart';
 import '../screens/more/more_screen.dart';
@@ -14,6 +15,7 @@ import '../screens/onboarding/team_selection_screen.dart';
 import '../screens/onboarding/welcome_screen.dart';
 import '../screens/shell/main_shell.dart';
 import '../screens/sports/sport_selection_screen.dart';
+import '../screens/summary/weekly_summary_screen.dart'; // ← NUEVO
 import '../screens/team/team_locker_screen.dart';
 
 class RouterRefreshNotifier extends ChangeNotifier {
@@ -53,6 +55,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               loc == '/divisions' ||
               loc == '/calendar' ||
               loc == '/games' ||
+              loc.startsWith('/game/') ||
+              loc == '/summary' ||
               loc == '/achievements' ||
               loc == '/more')) {
         return '/welcome';
@@ -61,6 +65,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
+      // ---------- Onboarding ----------
       GoRoute(
         path: '/welcome',
         name: 'welcome',
@@ -79,6 +84,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           return TeamSelectionScreen(selectingSecondTeam: isSecond);
         },
       ),
+
+      // ---------- Shell (tabs) ----------
       ShellRoute(
         builder: (context, state, child) => MainShell(child: child),
         routes: [
@@ -109,6 +116,29 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           ),
         ],
       ),
+
+      // ---------- Detalle de partido ----------
+      GoRoute(
+        path: '/game/:id',
+        name: 'game-detail',
+        builder: (context, state) {
+          final id = state.pathParameters['id']!;
+          return GameDetailScreen(gameId: id);
+        },
+      ),
+
+      // ---------- Resumen semanal ----------
+      GoRoute(
+        path: '/summary',
+        name: 'weekly-summary',
+        builder: (context, state) {
+          final week =
+              int.tryParse(state.uri.queryParameters['week'] ?? '1') ?? 1;
+          return WeeklySummaryScreen(initialWeek: week);
+        },
+      ),
+
+      // ---------- Otras ----------
       GoRoute(
         path: '/team/:id',
         name: 'team',

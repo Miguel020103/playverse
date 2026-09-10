@@ -2,11 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../application/achievements/achievements_provider.dart';
+import '../../../application/games/games_filter_provider.dart';
 import '../../../application/games/games_provider.dart';
+import '../../../application/games/sync_favorites_provider.dart';
 import '../../../application/teams/teams_provider.dart';
 import '../../../core/utils/color_utils.dart';
+import '../../../data/services/espn_score_service.dart';
 import '../../../domain/game/game.dart';
 import '../../../domain/team/team.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/source_badge.dart';
+import 'package:go_router/go_router.dart';
 
 String _formatDate(DateTime d) {
   const days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
@@ -33,11 +39,10 @@ class _GamesScreenState extends ConsumerState<GamesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final games = ref.watch(gamesLiveProvider);
-    final weekGames = games.where((g) => g.id.startsWith('w$_selectedWeek')).toList()
-      ..sort((a, b) => a.scheduledAt.compareTo(b.scheduledAt));
-
+    final filter = ref.watch(gamesFilterProvider);
+    final weekGames = ref.watch(filteredGamesProvider(_selectedWeek));
     final completedCount = weekGames.where((g) => g.isCompleted).length;
+    final syncState = ref.watch(syncFavoritesProvider);
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0A0C),
@@ -45,6 +50,7 @@ class _GamesScreenState extends ConsumerState<GamesScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Header
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
               child: Column(
@@ -75,6 +81,85 @@ class _GamesScreenState extends ConsumerState<GamesScreen> {
                     style: TextStyle(
                       fontSize: 13,
                       color: Colors.white.withOpacity(0.4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Filtro + Botón sync
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Row(
+                children: [
+                  // Segmented filter
+                  Expanded(
+                    child: Container(
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          _FilterChip(
+                            label: 'Todos',
+                            selected: filter == GamesFilter.all,
+                            onTap: () => ref
+                                .read(gamesFilterProvider.notifier)
+                                .state = GamesFilter.all,
+                          ),
+                          _FilterChip(
+                            label: 'Mis equipos',
+                            selected: filter == GamesFilter.myTeams,
+                            onTap: () => ref
+                                .read(gamesFilterProvider.notifier)
+                                .state = GamesFilter.myTeams,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  // Botón actualizar
+                  Material(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      onTap: syncState.isSyncing
+                          ? null
+                          : () async {
+                              await ref
+                                  .read(syncFavoritesProvider.notifier)
+                                  .sync();
+                              final s = ref.read(syncFavoritesProvider);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      s.error != null
+                                          ? 'Error al sincronizar'
+                                          : 'Actualizados ${s.updatedCount ?? 0} partidos',
+                                    ),
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
+                            },
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox(
+                        width: 44,
+                        height: 40,
+                        child: syncState.isSyncing
+                            ? const Padding(
+                                padding: EdgeInsets.all(10),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white70,
+                                ),
+                              )
+                            : const Icon(Icons.sync, color: Colors.white70, size: 20),
+                      ),
                     ),
                   ),
                 ],
@@ -141,13 +226,19 @@ class _GamesScreenState extends ConsumerState<GamesScreen> {
               ),
             ),
 
+            // Lista
             Expanded(
               child: weekGames.isEmpty
-                  ? Center(
-                      child: Text(
-                        'Sin partidos esta semana',
-                        style: TextStyle(color: Colors.white.withOpacity(0.35)),
-                      ),
+                  ? EmptyState(
+                      icon: filter == GamesFilter.myTeams
+                          ? Icons.groups_outlined
+                          : Icons.sports_football_outlined,
+                      title: filter == GamesFilter.myTeams
+                          ? 'No hay partidos de tus equipos'
+                          : 'Sin partidos esta semana',
+                      subtitle: filter == GamesFilter.myTeams
+                          ? 'Prueba a cambiar de semana o selecciona “Todos”.'
+                          : 'Vuelve más tarde o cambia de semana.',
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
@@ -156,12 +247,14 @@ class _GamesScreenState extends ConsumerState<GamesScreen> {
                         final g = weekGames[i];
                         final home = ref.watch(teamByIdProvider(g.homeTeamId));
                         final away = ref.watch(teamByIdProvider(g.awayTeamId));
-                        if (home == null || away == null) return const SizedBox.shrink();
+                        if (home == null || away == null) {
+                          return const SizedBox.shrink();
+                        }
                         return _GameCard(
                           game: g,
                           home: home,
                           away: away,
-                          onTap: () => _showResultSheet(context, ref, g, home, away),
+                          onTap: () => context.push('/game/${g.id}'),
                         );
                       },
                     ),
@@ -194,177 +287,110 @@ class _GamesScreenState extends ConsumerState<GamesScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 24,
-            right: 24,
-            top: 20,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                game.isCompleted ? 'Editar resultado' : 'Registrar resultado',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _formatDate(game.scheduledAt),
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.white.withOpacity(0.45),
-                ),
-              ),
-              const SizedBox(height: 24),
-              _TeamScoreRow(
-                team: home,
-                score: game.result?.homeScore,
-                isHome: true,
-              ),
-              const SizedBox(height: 12),
-              _TeamScoreRow(
-                team: away,
-                score: game.result?.awayScore,
-                isHome: false,
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: homeCtrl,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 20,
-                      ),
-                      textAlign: TextAlign.center,
-                      decoration: _scoreDecoration(home.abbreviation),
-                    ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(
-                      '—',
-                      style: TextStyle(
-                        color: Colors.white38,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w300,
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: awayCtrl,
-                      keyboardType: TextInputType.number,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 20,
-                      ),
-                      textAlign: TextAlign.center,
-                      decoration: _scoreDecoration(away.abbreviation),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: () async {
-                    final hs = int.tryParse(homeCtrl.text.trim());
-                    final as_ = int.tryParse(awayCtrl.text.trim());
-                    if (hs == null || as_ == null || hs < 0 || as_ < 0) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Introduce marcadores válidos'),
-                        ),
-                      );
-                      return;
-                    }
-                    await ref.read(saveGameResultProvider)(
-                      gameId: game.id,
-                      homeScore: hs,
-                      awayScore: as_,
-                    );
-                    await ref.read(unlockedAchievementsProvider.notifier).evaluate();
-                    if (ctx.mounted) {
-                      Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Resultado guardado'),
-                          behavior: SnackBarBehavior.floating,
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.black,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: const Text(
-                    'Guardar resultado',
-                    style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
-                  ),
-                ),
-              ),
-              if (game.isCompleted) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: TextButton(
-                    onPressed: () async {
-                      await ref.read(clearGameResultProvider)(gameId: game.id);
-                      await ref.read(unlockedAchievementsProvider.notifier).evaluate();
-                      if (ctx.mounted) {
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Resultado eliminado'),
-                            behavior: SnackBarBehavior.floating,
-                            duration: Duration(seconds: 2),
-                          ),
-                        );
-                      }
-                    },
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.redAccent,
-                    ),
-                    child: const Text(
-                      'Eliminar resultado',
-                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
+        return _ResultBottomSheet(
+          game: game,
+          home: home,
+          away: away,
+          homeCtrl: homeCtrl,
+          awayCtrl: awayCtrl,
         );
       },
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Filter chip
+// ---------------------------------------------------------------------------
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: const EdgeInsets.all(3),
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: selected ? Colors.black : Colors.white60,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Bottom sheet con sugerencia ESPN + badge
+// ---------------------------------------------------------------------------
+class _ResultBottomSheet extends ConsumerStatefulWidget {
+  final Game game;
+  final Team home;
+  final Team away;
+  final TextEditingController homeCtrl;
+  final TextEditingController awayCtrl;
+
+  const _ResultBottomSheet({
+    required this.game,
+    required this.home,
+    required this.away,
+    required this.homeCtrl,
+    required this.awayCtrl,
+  });
+
+  @override
+  ConsumerState<_ResultBottomSheet> createState() => _ResultBottomSheetState();
+}
+
+class _ResultBottomSheetState extends ConsumerState<_ResultBottomSheet> {
+  OfficialResultSuggestion? _suggestion;
+  bool _loadingEspn = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEspnSuggestion();
+  }
+
+  Future<void> _loadEspnSuggestion() async {
+    if (widget.game.isCompleted && widget.game.source == DataSourceType.remote) {
+      setState(() => _loadingEspn = false);
+      return;
+    }
+
+    try {
+      final service = EspnScoreService();
+      final suggestion = await service.getOfficialSuggestion(widget.game);
+      if (mounted) {
+        setState(() {
+          _suggestion = suggestion;
+          _loadingEspn = false;
+        });
+      }
+      service.dispose();
+    } catch (_) {
+      if (mounted) setState(() => _loadingEspn = false);
+    }
   }
 
   InputDecoration _scoreDecoration(String label) {
@@ -379,8 +405,262 @@ class _GamesScreenState extends ConsumerState<GamesScreen> {
       ),
     );
   }
+
+  @override
+  Widget build(BuildContext context) {
+    final game = widget.game;
+    final home = widget.home;
+    final away = widget.away;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 24,
+        right: 24,
+        top: 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              game.isCompleted ? 'Editar resultado' : 'Registrar resultado',
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _formatDate(game.scheduledAt),
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withOpacity(0.45),
+              ),
+            ),
+            if (game.isCompleted) ...[
+              const SizedBox(height: 10),
+              SourceBadge(source: game.source),
+            ],
+            const SizedBox(height: 20),
+
+            // Sugerencia ESPN
+            if (_loadingEspn)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: LoadingState(message: 'Buscando resultado oficial...'),
+              )
+            else if (_suggestion != null && _suggestion!.isFinal)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 20),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0D2E1A),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.greenAccent.withOpacity(0.35)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.verified, color: Colors.greenAccent, size: 18),
+                        SizedBox(width: 6),
+                        Text(
+                          'Resultado oficial ESPN',
+                          style: TextStyle(
+                            color: Colors.greenAccent,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      '${_suggestion!.homeScore}  -  ${_suggestion!.awayScore}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _suggestion!.statusDetail,
+                      style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 12),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 46,
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          await ref.read(saveGameResultProvider)(
+                            gameId: game.id,
+                            homeScore: _suggestion!.homeScore,
+                            awayScore: _suggestion!.awayScore,
+                          );
+                          // Ideal: también marcar source = remote en el repositorio
+                          await ref.read(unlockedAchievementsProvider.notifier).evaluate();
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Resultado oficial guardado'),
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          }
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.greenAccent,
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: const Text(
+                          'Usar resultado oficial',
+                          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (_suggestion != null && _suggestion!.isInProgress)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  'En vivo: ${_suggestion!.homeScore} - ${_suggestion!.awayScore}  ·  ${_suggestion!.statusDetail}',
+                  style: const TextStyle(
+                    color: Colors.orangeAccent,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+
+            // Inputs manuales
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: widget.homeCtrl,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 20,
+                    ),
+                    textAlign: TextAlign.center,
+                    decoration: _scoreDecoration(home.abbreviation),
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text('—', style: TextStyle(color: Colors.white38, fontSize: 24)),
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: widget.awayCtrl,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 20,
+                    ),
+                    textAlign: TextAlign.center,
+                    decoration: _scoreDecoration(away.abbreviation),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                onPressed: () async {
+                  final hs = int.tryParse(widget.homeCtrl.text.trim());
+                  final as_ = int.tryParse(widget.awayCtrl.text.trim());
+                  if (hs == null || as_ == null || hs < 0 || as_ < 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Introduce marcadores válidos')),
+                    );
+                    return;
+                  }
+                  await ref.read(saveGameResultProvider)(
+                    gameId: game.id,
+                    homeScore: hs,
+                    awayScore: as_,
+                  );
+                  await ref.read(unlockedAchievementsProvider.notifier).evaluate();
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Resultado guardado'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+                child: const Text(
+                  'Guardar resultado',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                ),
+              ),
+            ),
+            if (game.isCompleted) ...[
+              const SizedBox(height: 10),
+              TextButton(
+                onPressed: () async {
+                  await ref.read(clearGameResultProvider)(gameId: game.id);
+                  await ref.read(unlockedAchievementsProvider.notifier).evaluate();
+                  if (context.mounted) Navigator.pop(context);
+                },
+                child: const Text(
+                  'Eliminar resultado',
+                  style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
+// ---------------------------------------------------------------------------
+// Game Card con badge
+// ---------------------------------------------------------------------------
 class _GameCard extends StatelessWidget {
   final Game game;
   final Team home;
@@ -423,12 +703,11 @@ class _GameCard extends StatelessWidget {
                       ),
                     ),
                     const Spacer(),
-                    if (completed)
+                    if (completed) ...[
+                      SourceBadge(source: game.source, compact: true),
+                      const SizedBox(width: 6),
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
                           color: Colors.green.withOpacity(0.15),
                           borderRadius: BorderRadius.circular(6),
@@ -442,8 +721,8 @@ class _GameCard extends StatelessWidget {
                             letterSpacing: 0.5,
                           ),
                         ),
-                      )
-                    else
+                      ),
+                    ] else
                       Text(
                         'Programado',
                         style: TextStyle(
@@ -511,60 +790,6 @@ class _GameCard extends StatelessWidget {
             fontSize: 20,
             fontWeight: FontWeight.w900,
             color: score != null ? Colors.white : Colors.white24,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _TeamScoreRow extends StatelessWidget {
-  final Team team;
-  final int? score;
-  final bool isHome;
-
-  const _TeamScoreRow({
-    required this.team,
-    required this.score,
-    required this.isHome,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final primary = parseHexColor(team.primaryColor);
-    return Row(
-      children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: primary.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          padding: const EdgeInsets.all(5),
-          child: Image.asset(
-            team.logoAsset,
-            errorBuilder: (_, __, ___) =>
-                Icon(Icons.sports_football, size: 18, color: primary),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            team.name,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-              fontSize: 14,
-            ),
-          ),
-        ),
-        Text(
-          score?.toString() ?? '—',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w900,
-            color: score != null ? Colors.white : Colors.white38,
           ),
         ),
       ],
